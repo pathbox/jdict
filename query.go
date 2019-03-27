@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
+
 	"os"
 	"os/exec"
 	"strings"
@@ -18,11 +20,10 @@ import (
 )
 
 var (
-	voiceURL = "https://dict.youdao.com/dictvoice?audio=%s&type=2"
+	voiceURL = "http://dict.youdao.com/dictvoice?audio=%s&le=jap"
 )
 
 func query(words []string, withVoice, withMore, isQuiet, isMulti bool) {
-	var url string
 	var doc *goquery.Document
 	var voiceBody io.ReadCloser
 
@@ -31,11 +32,7 @@ func query(words []string, withVoice, withMore, isQuiet, isMulti bool) {
 
 	isChinese := isChinese(queryString)
 
-	if isChinese {
-		url = "http://dict.youdao.com/w/jap/%s"
-	} else {
-		url = "http://dict.youdao.com/w/%s"
-	}
+	wUrl := "http://dict.youdao.com/w/jap/%s"
 
 	//Init spinner
 	var s *spinner.Spinner
@@ -61,7 +58,7 @@ func query(words []string, withVoice, withMore, isQuiet, isMulti bool) {
 		client.Transport = httpTransport
 		httpTransport.Dial = dialer.Dial
 
-		resp, err := client.Get(fmt.Sprintf(url, queryString))
+		resp, err := client.Get(fmt.Sprintf(wUrl, url.QueryEscape(queryString)))
 		if err != nil {
 			color.Red("Query failed with err: %s", err.Error())
 			os.Exit(1)
@@ -73,21 +70,24 @@ func query(words []string, withVoice, withMore, isQuiet, isMulti bool) {
 			color.Red("Query failed with err: %s", err.Error())
 			os.Exit(1)
 		}
+
 		if withVoice && isAvailableOS() {
-			if resp, err := client.Get(fmt.Sprintf(voiceURL, voiceString)); err == nil {
+			vUrl := fmt.Sprintf(voiceURL, url.QueryEscape(voiceString)) // 要对参数日文进行QueryEscape编码
+			if resp, err := client.Get(vUrl); err == nil {
 				voiceBody = resp.Body
 			}
 		}
 	} else {
 		var err error
-		doc, err = goquery.NewDocument(fmt.Sprintf(url, queryString))
+		doc, err = goquery.NewDocument(fmt.Sprintf(wUrl, url.QueryEscape(queryString)))
 		if err != nil {
 			log.Fatal(err)
 			os.Exit(1)
 		}
 
 		if withVoice && isAvailableOS() {
-			if resp, err := http.Get(fmt.Sprintf(voiceURL, voiceString)); err == nil {
+			vUrl := fmt.Sprintf(voiceURL, url.QueryEscape(voiceString)) // 要对参数日文进行QueryEscape编码
+			if resp, err := http.Get(vUrl); err == nil {
 				voiceBody = resp.Body
 			}
 		}
@@ -100,40 +100,35 @@ func query(words []string, withVoice, withMore, isQuiet, isMulti bool) {
 	if isChinese {
 		// Find the result
 		fmt.Println()
-		doc.Find(".trans-container > ul > p").Each(func(i int, s *goquery.Selection) {
-			partOfSpeech := s.Children().Not(".contentTitle").Text()
-			if partOfSpeech != "" {
-				fmt.Printf("%14s ", color.MagentaString(partOfSpeech))
-			}
+		meanings := []string{}
+		phrases := []string{}
 
-			meanings := []string{}
-			s.Find(".contentTitle > .search-js").Each(func(ii int, ss *goquery.Selection) {
-				meanings = append(meanings, ss.Text())
+		doc.Find("#tWebTrans").Each(func(i int, s *goquery.Selection) {
+			s.Find(".wt-container").Each(func(ii int, ss *goquery.Selection) {
+				title := strings.TrimSpace(strings.Trim(ss.Find(".title").Text(), "\n\r"))
+				meanings = append(meanings, title)
+				str := strings.TrimSpace(strings.Trim(ss.Find(".collapse-content").Text(), "\n\r"))
+				if !strings.HasPrefix(str, "基于") {
+					meanings = append(meanings, str)
+				}
 			})
-			fmt.Printf("%s\n", color.GreenString(strings.Join(meanings, "; ")))
+
+			s.Find("#webPhrase .wordGroup").Each(func(ii int, ss *goquery.Selection) {
+				ph := strings.Replace(ss.Text(), " ", "", -1)
+				ph = strings.Trim(ph, "\n\r")
+				phrases = append(phrases, ph)
+			})
+
 		})
-	} else {
 
-		// Check for typos
-		if hint := getHint(doc); hint != nil {
-			color.Blue("\r\n    word '%s' not found, do you mean?", queryString)
-			fmt.Println()
-			for _, guess := range hint {
-				color.Green("    %s", guess[0])
-				color.Magenta("    %s", guess[1])
-			}
-			fmt.Println()
-			return
+		for _, str := range meanings {
+			fmt.Println(color.GreenString(str))
 		}
 
-		// Find the pronounce
-		if !isMulti {
-			color.Green("\r\n    %s", getPronounce(doc))
+		fmt.Printf("\n%s\n", color.RedString("==短语=="))
+		for _, str := range phrases {
+			fmt.Println(color.GreenString(str))
 		}
-
-		// Find the result
-		result := doc.Find("div#phrsListTab > div.trans-container > ul").Text()
-		color.Green(result)
 	}
 
 	// Show examples
@@ -169,6 +164,8 @@ func playVoice(body io.ReadCloser) {
 	if _, err := tmpfile.Write(data); err != nil {
 		log.Fatal(err)
 	}
+
+	fmt.Println("tmpfile length:", len(data))
 
 	if err := tmpfile.Close(); err != nil {
 		fmt.Println(err)

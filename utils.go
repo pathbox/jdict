@@ -81,8 +81,8 @@ func loadEnv() {
 func parseArgs(args []string) ([]string, bool, bool, bool) {
 	//match argument: -v or -m or -q
 	var withVoice, withMore, isQuiet bool
-	wordStartIndex := findWordStartIndex(args)
-	paramArray := args[:wordStartIndex]
+	wordStopIndex := findWordStopIndex(args)
+	paramArray := args[wordStopIndex:] // 参数数组
 	if elementInStringArray(paramArray, "-m") {
 		withMore = true
 	}
@@ -95,14 +95,14 @@ func parseArgs(args []string) ([]string, bool, bool, bool) {
 		isQuiet = true
 	}
 
-	return args[wordStartIndex:], withVoice, withMore, isQuiet
+	return args[:wordStopIndex], withVoice, withMore, isQuiet
 }
 
-func findWordStartIndex(args []string) int {
+func findWordStopIndex(args []string) int {
 	// iter the args array, if an element is -m or -v or -q,
 	// then all of the latter elements must be parameter instead of words.
 	for index, word := range args {
-		if !strings.HasPrefix(word, "-") {
+		if strings.HasPrefix(word, "-") {
 			return index
 		}
 	}
